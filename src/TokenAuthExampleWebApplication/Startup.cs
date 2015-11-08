@@ -24,6 +24,7 @@ namespace TokenAuthExampleWebApplication
         {
         }
 
+
         public void ConfigureServices(IServiceCollection services)
         {
             // *** CHANGE THIS FOR PRODUCTION USE ***
