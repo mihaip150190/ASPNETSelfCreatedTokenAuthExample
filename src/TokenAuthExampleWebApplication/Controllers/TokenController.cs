@@ -1,13 +1,13 @@
 ﻿using System;
-using System.Linq;
 using Microsoft.AspNet.Mvc;
-using System.IdentityModel.Tokens;
 using System.Security.Claims;
 using Microsoft.AspNet.Authorization;
-using Microsoft.Framework.OptionsModel;
 using System.Security.Principal;
-using Microsoft.AspNet.Authentication.JwtBearer;
 using System.IdentityModel.Tokens.Jwt;
+using TokenAuthExampleWebApplication.Authentication;
+using TokenAuthExampleWebApplication.ViewModels;
+using System.Threading.Tasks;
+using Microsoft.AspNet.Identity;
 
 namespace TokenAuthExampleWebApplication.Controllers
 {
@@ -15,10 +15,12 @@ namespace TokenAuthExampleWebApplication.Controllers
     public class TokenController : Controller
     {
         private readonly TokenAuthOptions tokenOptions;
+        private ISignInManager<CustomUser> _signInManager;
 
-        public TokenController(TokenAuthOptions tokenOptions)
+        public TokenController(TokenAuthOptions tokenOptions, ISignInManager<CustomUser> signInManager)
         {
             this.tokenOptions = tokenOptions;
+            _signInManager = signInManager;
             //this.bearerOptions = options.Value;
             //this.signingCredentials = signingCredentials;
         }
@@ -35,7 +37,6 @@ namespace TokenAuthExampleWebApplication.Controllers
         {
             bool authenticated = false;
             string user = null;
-            int entityId = -1;
             string token = null;
             DateTime? tokenExpires = default(DateTime?);
 
@@ -46,18 +47,17 @@ namespace TokenAuthExampleWebApplication.Controllers
                 if (authenticated)
                 {
                     user = currentUser.Identity.Name;
-                    foreach (Claim c in currentUser.Claims) if (c.Type == "EntityID") entityId = Convert.ToInt32(c.Value);
                     tokenExpires = DateTime.UtcNow.AddMinutes(2);
-                    token = GetToken(currentUser.Identity.Name, tokenExpires);
+                    token = GetToken(currentUser.Identity as ClaimsIdentity, tokenExpires);
                 }
             }
-            return new { authenticated = authenticated, user = user, entityId = entityId, token = token, tokenExpires = tokenExpires };
+            return new { authenticated = authenticated, user = user, token = token, tokenExpires = tokenExpires };
         }
 
         public class AuthRequest
         {
-            public string username { get; set; }
-            public string password { get; set; }
+            public string Email { get; set; }
+            public string Password { get; set; }
         }
 
         /// <summary>
@@ -66,25 +66,22 @@ namespace TokenAuthExampleWebApplication.Controllers
         /// <param name="req"></param>
         /// <returns></returns>
         [HttpPost]
-        public dynamic Post([FromBody] AuthRequest req)
+        public async Task<dynamic> Post([FromBody] AuthRequest req)
         {
+            var result = await _signInManager.PasswordSignInAsync(req.Email, req.Password);
             // Obviously, at this point you need to validate the username and password against whatever system you wish.
-            if ((req.username == "TEST" && req.password == "TEST") || (req.username == "TEST2" && req.password == "TEST"))
+            if (result.Result == SignInResult.Success)
             {
                 DateTime? expires = DateTime.UtcNow.AddMinutes(2);
-                var token = GetToken(req.username, expires);
+                var token = GetToken(result.Identity, expires);
                 return new { authenticated = true, entityId = 1, token = token, tokenExpires = expires };
             }
             return new { authenticated = false };
         }
 
-        private string GetToken(string user, DateTime? expires)
+        private string GetToken(ClaimsIdentity identity, DateTime? expires)
         {
             var handler = new JwtSecurityTokenHandler();
-
-            // Here, you should create or look up an identity for the user which is being authenticated.
-            // For now, just creating a simple generic identity.
-            ClaimsIdentity identity = new ClaimsIdentity(new GenericIdentity(user, "TokenAuth"), new[] { new Claim("EntityID", "1", ClaimValueTypes.Integer) });
 
             var securityToken = handler.CreateToken(
                 issuer: tokenOptions.Issuer,

@@ -9,21 +9,44 @@ using Microsoft.AspNet.Authorization;
 using Microsoft.AspNet.Diagnostics;
 using Newtonsoft.Json;
 using Microsoft.AspNet.Http;
-using System.IO;
+using Microsoft.AspNet.Diagnostics.Entity;
+using Microsoft.Data.Entity;
+using Microsoft.Framework.Configuration;
+using Microsoft.Dnx.Runtime;
+using TokenAuthExampleWebApplication.AuthModels;
+using TokenAuthExampleWebApplication.Extensions;
+using TokenAuthExampleWebApplication.Authentication;
 
 namespace TokenAuthExampleWebApplication
 {
-    public class Startup
+    public partial class Startup
     {
         const string TokenAudience = "ExampleAudience";
         const string TokenIssuer = "ExampleIssuer";
         private RsaSecurityKey key;
         private TokenAuthOptions tokenOptions;
 
-        public Startup(IHostingEnvironment env)
+        public Startup(IHostingEnvironment env, IApplicationEnvironment appEnv)
         {
+            // Setup configuration sources.
+
+            var builder = new ConfigurationBuilder()
+                .SetBasePath(appEnv.ApplicationBasePath)
+                .AddJsonFile("appsettings.json")
+                .AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true);
+
+            if (env.IsDevelopment())
+            {
+                // This reads the configuration keys from the secret store.
+                // For more details on using the user secret store see http://go.microsoft.com/fwlink/?LinkID=532709
+                builder.AddUserSecrets();
+            }
+            builder.AddEnvironmentVariables();
+            Configuration = builder.Build();
+            InitMapper();
         }
 
+        public IConfigurationRoot Configuration { get; set; }
 
         public void ConfigureServices(IServiceCollection services)
         {
@@ -61,11 +84,33 @@ namespace TokenAuthExampleWebApplication
                     .RequireAuthenticatedUser().Build());
             });
 
+            services.AddEntityFramework()
+               .AddSqlServer()
+               .AddDbContext<AuthContext>(options =>
+                   options.UseSqlServer(Configuration["Data:DefaultConnection:AuthContext"]));
+
+            // Add Identity services to the services container.
+            services.AddCustomIdentity<CustomUser>();
+
             services.AddMvc();
         }
 
         public void Configure(IApplicationBuilder app, IHostingEnvironment env)
         {
+            // Add the following to the request pipeline only in development environment.
+            if (env.IsDevelopment())
+            {
+                app.UseBrowserLink();
+                app.UseDeveloperExceptionPage();
+                app.UseDatabaseErrorPage(DatabaseErrorPageOptions.ShowAll);
+            }
+            else
+            {
+                // Add Error handling middleware which catches all application specific errors and
+                // sends the request to the following path or controller action.
+                app.UseExceptionHandler("/Home/Error");
+            }
+
             app.UseIISPlatformHandler();
 
             // Register a simple error handler to catch token expiries and change them to a 401, 
@@ -79,7 +124,7 @@ namespace TokenAuthExampleWebApplication
                     // This should be much more intelligent - at the moment only expired 
                     // security tokens are caught - might be worth checking other possible 
                     // exceptions such as an invalid signature.
-                    if (error != null && error.Error is SecurityTokenExpiredException)
+                    if (error != null && (error.Error is SecurityTokenExpiredException || error.Error is SecurityTokenInvalidSignatureException))
                     {
                         context.Response.StatusCode = 401;
                         // What you choose to return here is up to you, in this case a simple 
@@ -128,7 +173,15 @@ namespace TokenAuthExampleWebApplication
             app.UseStaticFiles();
             
             // Add MVC to the request pipeline.
-            app.UseMvc();
+            app.UseMvc(routes =>
+            {
+                routes.MapRoute(
+                    name: "default",
+                    template: "{controller=Home}/{action=Index}/{id?}");
+
+                // Uncomment the following line to add a route for porting Web API 2 controllers.
+                // routes.MapWebApiRoute("DefaultApi", "api/{controller}/{id?}");
+            });
         }
     }
 }
